@@ -18,6 +18,7 @@ package za.co.absa.spline.migrator
 
 import akka.actor.SupervisorStrategy.Escalate
 import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy}
+import za.co.absa.spline.migrator.ArangoActor.LineagePersistRequest
 import za.co.absa.spline.model.DataLineage
 import za.co.absa.spline.persistence.api.DataLineageReader.PageRequest
 import za.co.absa.spline.migrator.MongoActor.PageSize
@@ -43,6 +44,7 @@ class MigratorActor(conf: MigratorConfig)
     with ActorLogging {
 
   private val mongoActor = context.actorOf(Props(new MongoActor(conf.mongoConnectionUrl)), "mongo")
+  private val mongoStreamActor = context.actorOf(Props(new MongoChangeStreamActor(conf.mongoConnectionUrl)), "mongo")
   private val arangoActor = context.actorOf(Props(new ArangoActor(conf.arangoConnectionUrl)), "arango")
 
   override def supervisorStrategy: SupervisorStrategy = OneForOneStrategy()({ case _ => Escalate })
@@ -52,21 +54,40 @@ class MigratorActor(conf: MigratorConfig)
   }
 
   private def pumpAllLineagesAndReportTo(watcher: ActorRef): Unit = {
+    if (conf.streamNewLineages) {
+
+    }
+    // if continuous updates then
+    //   query if table with opevents exists and get last id
+    //   if last_opid table not exists then execute batch migration based on manual time limit
+    //   start listener as ? new Actor ?
+    // ? page should end now + 1 hour for possility of delayed clocks on some machines. It would be possible to
+    //   ? stream from the oldest to the newest otherwise new lineages may break paging.
+    //   ? streaming to have running stats and not stats at the end
     processPage(PageRequest(System.currentTimeMillis, 0, conf.batchSize), Stats.empty)
 
     def processPage(page: PageRequest, prevTotals: Stats): Unit = {
       context become processingPage(Stats.emptyTree.copy(parentStats = prevTotals), None)
       mongoActor ! MongoActor.GetLineages(page)
+      if (conf.streamNewLineages) {
+        mongoStreamActor ! Start
+      }
 
       def processingPage(pageStats: TreeStats, pageActualSize: Option[Int]): Receive = {
         case lineage: DataLineage =>
-          arangoActor ! ArangoActor.LineagePersistRequest(lineage)
+          arangoActor ! LineagePersistRequest(lineage)
+
+        case StreamedLineage(lineage) =>
+          arangoActor ! LineagePersistRequest(lineage, streamed = true)
 
         case PageSize(pageSize) =>
           onCountsUpdate(pageStats, Some(pageSize)) ensuring pageActualSize.isEmpty
 
         case resp: ArangoActor.LineagePersistResponse =>
           resp.result match {
+            case Success(_) if resp.streamed =>
+            case Failure(e: Throwable) if resp.streamed =>
+              log.error(e, e.getMessage)
             case Success(_) =>
               onCountsUpdate(pageStats.incSuccess, pageActualSize)
             case Failure(e: Throwable) =>

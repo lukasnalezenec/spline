@@ -32,20 +32,20 @@ object ArangoActor {
 
   trait RequestMessage
 
-  case class LineagePersistRequest(lineage: DataLineage) extends RequestMessage
+  case class LineagePersistRequest(lineage: DataLineage, streamed: Boolean = false) extends RequestMessage
 
 
   trait ResponseMessage
 
-  abstract class LineagePersistResponse(val result: Try[Unit]) extends ResponseMessage
+  abstract class LineagePersistResponse(val result: Try[Unit], val streamed: Boolean) extends ResponseMessage
 
-  case object LineagePersistSuccess extends LineagePersistResponse(Success({}))
+  case class LineagePersistSuccess(override val streamed: Boolean) extends LineagePersistResponse(Success({}), streamed: Boolean)
 
-  case class LineagePersistFailure(dsId: UUID, e: RuntimeException)
-    extends LineagePersistResponse(Failure(new LineagePersistException(dsId, e)))
+  case class LineagePersistFailure(dsId: UUID, override val streamed: Boolean, e: RuntimeException)
+    extends LineagePersistResponse(Failure(new LineagePersistException(dsId, streamed, e)), streamed)
 
-  class LineagePersistException(val dsId: UUID, e: RuntimeException)
-    extends Exception(s"Failed to save lineage: $dsId", e)
+  class LineagePersistException(val dsId: UUID, streamed: Boolean, e: RuntimeException)
+    extends Exception(s"Failed to save ${if (streamed) "new streamed" else "" } lineage with id: $dsId", e)
 
 }
 
@@ -54,11 +54,11 @@ class ArangoActor(connectionUrl: String) extends Actor {
   private val persister: Persister = Persister.create(connectionUrl)
 
   override def receive: Receive = {
-    case LineagePersistRequest(lineage) =>
+    case LineagePersistRequest(lineage, streamed) =>
       save(lineage).
         map(_ => LineagePersistSuccess).
         recover({
-          case e: RuntimeException => LineagePersistFailure(lineage.rootDataset.id, e)
+          case e: RuntimeException => LineagePersistFailure(lineage.rootDataset.id, streamed, e)
         }).
         pipeTo(sender)
   }

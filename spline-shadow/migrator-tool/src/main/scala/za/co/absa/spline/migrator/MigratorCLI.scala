@@ -53,6 +53,10 @@ object MigratorCLI extends App {
       text s"Initialize Arango DB"
       action ((value, conf) => conf.copy(initializeArangodb = true)))
 
+    (opt[Long]('s', "stream-new-lineages")
+      text s"Migrate in parallel all new lineages that will arrive after start of this tool."
+      action ((value, conf) => conf.copy()))
+
     help("help").text("prints this usage text")
   }
 

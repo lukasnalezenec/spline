@@ -22,7 +22,8 @@ case class MigratorConfig
   arangoConnectionUrl: String = "",
   batchSize: Int = 100,
   batchesMax: Int = -1,
-  initializeArangodb: Boolean = false
+  initializeArangodb: Boolean = false,
+  streamNewLineages: Boolean = false
 )
 
 object MigratorConfig {
